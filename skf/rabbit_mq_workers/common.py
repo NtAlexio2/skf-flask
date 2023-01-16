@@ -1,9 +1,14 @@
 from sys import stderr
 from kubernetes import client, config
 
-def delete_all(instance_name, user_id):
+def delete_all(instance_name, user_id, requirements=None):
     delete_ingress(instance_name, user_id)
     delete_service(instance_name, user_id)
+
+    if requirements:
+        for requirement in requirements:
+            delete_deployment(requirement, user_id)
+
     delete_deployment(instance_name, user_id)
     delete_namespace(user_id)
 

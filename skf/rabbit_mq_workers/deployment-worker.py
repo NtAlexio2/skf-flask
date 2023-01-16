@@ -5,6 +5,10 @@ from kubernetes import client, config
 
 from sys import stderr
 
+# restarting machines causes updating addresses. not required to remove or clear this.
+# dictionary to resolve image_tag to external address
+LAB_EXTERNAL_MAP = {}
+
 creds = pika.PlainCredentials('admin', 'admin-skf-secret')
 connection = pika.BlockingConnection(pika.ConnectionParameters(
     host=settings.RABBIT_MQ_CONN_STRING,
@@ -23,10 +27,36 @@ if subdomain_deploy:
 else:
     print('Port deploy using {}:<port>'.format(labs_domain))
 
+def map_new_external(image_tag, user_id, response):
+    key = ':'.join(image_tag, user_id)
+    LAB_EXTERNAL_MAP.update({ key: response['message'] })
+
+def resolve_container(rpc_body):
+    key = ':'.join(rpc_body.split(':')[1:])
+    if key in LAB_EXTERNAL_MAP.keys():
+        return {'message': LAB_EXTERNAL_MAP[key]}
+    else:
+        return {'message': 'could not resolve lab to external ip ()'.format(key)}
+
+def deploy_requirements(required_deployments, user_id):
+    for image_tag in required_deployments:
+        response = do_deploy(image_tag, user_id)
+        map_new_external(image_tag, user_id, response)
+
 def deploy_container(rpc_body):
-    user_id = string_split_user_id(rpc_body)
     deployment = string_split_deployment(rpc_body)
+    user_id = string_split_user_id(rpc_body)
+
     create_user_namespace(user_id)
+
+    required_deployments = string_split_dependencies(rpc_body)
+    deploy_requirements(required_deployments, user_id)
+
+    response = do_deploy(deployment, user_id)
+    map_new_external(deployment, user_id, response)
+    return response
+
+def do_deploy(deployment, user_id):
     deployment_object = create_deployment_object(deployment)
     create_deployment(deployment_object, user_id)
     try:
@@ -145,6 +175,13 @@ def string_split_deployment(body):
     except:
         return {'message': 'Failed to deploy, error no deployment found!'} 
 
+def string_split_dependencies(body):
+    try:
+        requirements = body.split(':')
+        return list(filter(lambda x: x, requirements[2].split(',')))
+    except:
+        return {'message': 'Failed to deploy, error no dependencies found!'}
+
 def get_host_port_from_response(response):
     try:
         for service in response.spec.ports:
@@ -154,7 +191,8 @@ def get_host_port_from_response(response):
         return {'message': 'Failed to deploy, error no host or port!'} 
 
 def on_request(ch, method, props, body):
-        response = deploy_container(str(body, 'utf-8'))
+        body = str(body, 'utf-8')
+        response = [resolve_container(body) if body.startswith('resolve:') else deploy_container(body)]
         ch.basic_publish(exchange='',
                         routing_key=props.reply_to,
                         properties=pika.BasicProperties(correlation_id = \

@@ -14,7 +14,8 @@ channel.queue_declare(queue='deletion_qeue')
 def delete_container(rpc_body):
     user_id = string_split_user_id(rpc_body)
     deployment = string_split_deployment(rpc_body)
-    delete_all(deployment, user_id)
+    required_labs = string_split_dependencies(rpc_body)
+    delete_all(deployment, user_id, required_labs)
     time.sleep(3)
     return {'message': 'If present, the container image was deleted from the cluster!'} 
 
@@ -32,6 +33,14 @@ def string_split_deployment(body):
         return deployment[0]
     except:
         return {'message': 'Failed to delete, error no deployment found!'} 
+
+
+def string_split_dependencies(body):
+    try:
+        requirements = body.split(':')
+        return list(filter(lambda x: x, requirements[2].split(',')))
+    except:
+        return {'message': 'Failed to delete, error no dependencies found!'}
 
 
 def on_request(ch, method, props, body):
